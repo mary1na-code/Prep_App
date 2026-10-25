@@ -1,6 +1,10 @@
 import { useEffect, useState, type ChangeEvent, type ReactNode } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 
+import OnboardingPage from './pages/OnboardingPage'
+
+import { supabase } from './config/supabase'
+
 import ForgotPasswordForm from './components/Auth/ForgotPasswordForm'
 import LoginForm from './components/Auth/LoginForm'
 import SignupForm from './components/Auth/SignupForm'
@@ -31,15 +35,89 @@ function AuthenticatedQuiz() {
   )
 }
 
+
 function AuthenticatedRoute() {
   const { isLoading, session } = useAuth()
   const location = useLocation()
+  const [profileLoading, setProfileLoading] = useState(true)
+  const [profileError, setProfileError] = useState('')
+  const [onboardingCompleted, setOnboardingCompleted] = useState(false)
 
-  if (isLoading) return <div className="route-loading" role="status">Restoring your session…</div>
-  if (!session) return <Navigate to="/login" replace state={{ from: location }} />
+  useEffect(() => {
+    let active = true
+
+    async function checkProfile() {
+      if (!session?.user.id) {
+        setProfileLoading(false)
+        return
+      }
+
+      if (!supabase) {
+        setProfileError('Supabase is not configured.')
+        setProfileLoading(false)
+        return
+      }
+
+      setProfileLoading(true)
+      setProfileError('')
+
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('onboarding_completed')
+        .eq('id', session.user.id)
+        .maybeSingle()
+
+      if (!active) return
+
+      if (error) {
+        setProfileError('Could not load your academic profile.')
+      } else {
+        setOnboardingCompleted(data?.onboarding_completed === true)
+      }
+
+      setProfileLoading(false)
+    }
+
+    void checkProfile()
+
+    return () => {
+      active = false
+    }
+  }, [session?.user.id])
+
+  if (isLoading || (session && profileLoading)) {
+    return (
+      <div className="route-loading" role="status">
+        Loading your Prepora profile…
+      </div>
+    )
+  }
+
+  if (!session) {
+    return <Navigate to="/login" replace state={{ from: location }} />
+  }
+
+  if (profileError) {
+    return (
+      <div className="route-loading" role="alert">
+        <p>{profileError}</p>
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+        >
+          Try again
+        </button>
+      </div>
+    )
+  }
+
+  if (!onboardingCompleted) {
+    return <Navigate to="/onboarding" replace />
+  }
 
   return <AuthenticatedQuiz />
 }
+
 
 function PublicOnly({ children, allowPasswordRecovery = false }: { children: ReactNode; allowPasswordRecovery?: boolean }) {
   const { isLoading, session, isPasswordRecovery } = useAuth()
@@ -109,6 +187,16 @@ function AppRoutes() {
         <Route path="/reset-password" element={<LegacyResetPasswordRoute />} />
         <Route path="/app" element={<AuthenticatedRoute />} />
         <Route path="*" element={<Navigate to="/" replace />} />
+
+        <Route
+          path="/onboarding"
+          element={
+            session
+            ? <OnboardingPage />
+            : <Navigate to="/login"   replace />
+          }
+        />
+        <Route path="/app" element={<AuthenticatedRoute />} />
       </Routes>
     </>
   )
